@@ -9,6 +9,10 @@ from sklearn.cluster import DBSCAN
 from shapely.geometry import Point, Polygon, MultiPolygon, GeometryCollection
 from shapely.validation import make_valid
 from skimage import measure
+from scipy.cluster.hierarchy import linkage, fcluster
+import networkx as nx
+from collections import defaultdict
+
 
 def identify_shared_clusters_2d(clustering_results, grid_shape):
     """
@@ -63,7 +67,7 @@ def identify_shared_clusters_2d(clustering_results, grid_shape):
     return shared_clusters
 
 
-def filter_deformed_tokens(padded_maps, grid_shape, undeformed_vector, similarity_threshold, comparison):
+def filter_deformed_tokens(padded_maps, grid_shape, normalized_undeformed_vector, threshold_undeformed, comparison):
     """
     Identifies tokens whose deformation exceeds a given similarity threshold.
 
@@ -78,30 +82,27 @@ def filter_deformed_tokens(padded_maps, grid_shape, undeformed_vector, similarit
     - token_vectors_dict (dict): Dictionary mapping (i, j) coordinates to a list of (map_idx, normalized_vector).
     """
     token_vectors_dict = {}
-    threshold = 1 - similarity_threshold
-
+    
     for map_idx, curr_map in enumerate(padded_maps):
         token_vectors = curr_map.grid.graph.alpha_masked_token_vectors
         for i in range(grid_shape[0]):
             for j in range(grid_shape[1]):
                 if not np.isnan(token_vectors[i, j]).any():
                     normalized_vector = comparison.normalize_vector(token_vectors[i, j])
-                    similarity = comparison.cosine_similarity(normalized_vector, undeformed_vector)
-                    weight = 1 - similarity
-                    if weight > threshold:
-                        token_vectors_dict.setdefault((i, j), []).append((map_idx, normalized_vector))
-
+                    distance_from_undeformed = comparison.ratio_distance(normalized_vector, normalized_undeformed_vector)
+                    if distance_from_undeformed > threshold_undeformed:
+                        if (i, j) not in token_vectors_dict:
+                            token_vectors_dict[(i, j)] = []
+                        token_vectors_dict[(i, j)].append((map_idx, normalized_vector))
     return token_vectors_dict
 
-
-def cluster_tokens(token_vectors_dict, eps, min_samples, comparison):
+def cluster_tokens(token_vectors_dict, max_distance, comparison):
     """
-    Clusters token vectors using DBSCAN based on their ratio distances.
+    Clusters token vectors using hierarchical clustering (Complete Linkage) based on their ratio distances.
 
     Parameters:
     - token_vectors_dict (dict): Dictionary mapping (i, j) coordinates to token vectors.
-    - eps (float): DBSCAN epsilon parameter.
-    - min_samples (int): DBSCAN minimum samples parameter.
+    - max_distance (float): Maximum distance for hierarchical clustering to form clusters.
     - comparison (module): Module containing distance functions.
 
     Returns:
@@ -116,17 +117,19 @@ def cluster_tokens(token_vectors_dict, eps, min_samples, comparison):
         if len(vectors) < 2:
             continue  # Skip if not enough data for clustering
 
-        # Compute pairwise distances
-        pairwise_distances = squareform(pdist(vectors, metric=comparison.ratio_distance))
+        # Normalize vectors and compute pairwise distances
+        normalized_vectors = np.array([comparison.normalize_vector(vec) for vec in vectors])
+        pairwise_distances = pdist(normalized_vectors, metric=comparison.ratio_distance)
 
-        # Apply DBSCAN clustering
-        dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric="precomputed").fit(pairwise_distances)
+        # Perform hierarchical clustering (Complete Linkage)
+        Z = linkage(pairwise_distances, method='complete')
+        clusters = fcluster(Z, max_distance, criterion='distance')
 
         # Store clustering results
         clustering_results[token] = {
-            "clusters": dbscan.labels_,
+            "clusters": clusters,
             "vectors": vectors,
-            "map_indices": map_indices,
+            "map_indices": map_indices
         }
 
     return clustering_results
@@ -250,8 +253,6 @@ def visualize_cluster_grid(enhanced_cluster_grid, cmap, plot=True):
     plt.show()
 
 
-import networkx as nx
-from collections import defaultdict
 
 def build_shared_cluster_graphs(shared_clusters):
     """

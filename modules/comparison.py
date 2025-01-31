@@ -4,7 +4,6 @@ import numpy as np
 from skimage.transform import estimate_transform
 import rasterio
 import matplotlib.pyplot as plt 
-from rasterio.coords import BoundingBox
 from scipy.interpolate import RBFInterpolator
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.colors as col
@@ -17,9 +16,13 @@ from shapely.geometry import Polygon, Point
 import alphashape
 import networkx as nx
 import os
-import rustworkx as rx
 import time
 from scipy.spatial.distance import euclidean
+
+
+
+
+
 
 
 red = '#FB4C59'
@@ -40,7 +43,17 @@ cmap1= cmap_similarity
 cmap2 = cmap_displacement
 
 
-import numpy as np
+def create_map_object(map_info, grid_size):
+    folder = map_info['folder']
+    folder_path = map_info['folder_path']
+    image_path = map_info['image_path']
+    gcp_df = map_info['points']
+    metadata = map_info['metadata']
+    epsg = int(map_info['epsg'])
+    base_x, base_y = 172119.73,1131710.35
+    current_map = Map(name = folder, gcp_df= gcp_df, grid_size = grid_size, base_x = base_x, base_y = base_y, metadata = metadata, folder_path = folder_path, image_path = image_path, epsg = epsg)
+    return current_map
+
 
 def ratio_distance(vec1, vec2):
     """
@@ -50,7 +63,8 @@ def ratio_distance(vec1, vec2):
     The denominator is chosen as the vector with the higher maximum value, 
     ensuring that the ratio is always <= 1.
     """
-    max_1, max_2 = np.max(vec1), np.max(vec2)
+    max_1 = np.max(vec1)
+    max_2 = np.max(vec2)
     ratio_vec = vec1 / vec2 if max_1 < max_2 else vec2 / vec1
     return np.max(ratio_vec) - np.min(ratio_vec)
 
@@ -59,14 +73,15 @@ def normalize_vector(vector):
     Normalizes a vector to unit length. Returns the original vector if its norm is zero.
     """
     norm = np.linalg.norm(vector)
-    return vector if norm == 0 else vector / norm
+    if norm == 0:
+        return vector
+    return vector / norm 
 
 def cosine_similarity(vec1, vec2):
     """
     Computes the cosine similarity between two vectors.
     """
-    norm_product = np.linalg.norm(vec1) * np.linalg.norm(vec2)
-    return 1 - np.dot(vec1, vec2) / norm_product if norm_product != 0 else 0
+    return 1 - np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
 
 def calculate_ratios_and_distances(vectors):
     """
@@ -260,29 +275,12 @@ def plot_padded_grid_old(padded_grid_x, padded_grid_y, token_vectors, min_x, max
 
 
 
-from sklearn.linear_model import RANSACRegressor
-
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.linear_model import RANSACRegressor
-
-
-
 
 #####
 def calculate_iqr(series):
     return series.quantile(0.75) - series.quantile(0.25)
 
-def create_map_object(map_info, grid_size):
-    folder = map_info['folder']
-    folder_path = map_info['folder_path']
-    image_path = map_info['image_path']
-    gcp_df = map_info['points']
-    metadata = map_info['metadata']
-    epsg = int(map_info['epsg'])
-    base_x, base_y = 172119.73,1131710.35
-    current_map = Map(name = folder, gcp_df= gcp_df, grid_size = grid_size, base_x = base_x, base_y = base_y, metadata = metadata, folder_path = folder_path, image_path = image_path, epsg = epsg)
-    return current_map
+
 
 def create_gcp_list_from_df(gcp_df):
     gcp_list = []
